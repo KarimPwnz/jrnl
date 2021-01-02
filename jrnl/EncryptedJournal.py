@@ -43,7 +43,7 @@ def decrypt_content(
 ) -> str:
     pwd_from_keychain = keychain and get_keychain(keychain)
     password = pwd_from_keychain or getpass.getpass()
-    result = decrypt_func(password)
+    result = decrypt_func(make_key(password))
     # Password is bad:
     if result is None and pwd_from_keychain:
         set_keychain(keychain, None)
@@ -51,7 +51,7 @@ def decrypt_content(
     while result is None and attempt < max_attempts:
         print("Wrong password, try again.", file=sys.stderr)
         password = getpass.getpass()
-        result = decrypt_func(password)
+        result = decrypt_func(make_key(password))
         attempt += 1
     if result is not None:
         return result
@@ -64,7 +64,7 @@ class EncryptedJournal(Journal):
     def __init__(self, name="default", **kwargs):
         super().__init__(name, **kwargs)
         self.config["encrypt"] = True
-        self.password = None
+        self.key = None
 
     def open(self, filename=None):
         """Opens the journal file defined in the config and parses it into a list of Entries.
@@ -76,7 +76,7 @@ class EncryptedJournal(Journal):
                 os.makedirs(dirname)
                 print(f"[Directory {dirname} created]", file=sys.stderr)
             self.create_file(filename)
-            self.password = create_password(self.name)
+            self.key = make_key(create_password(self.name))
 
             print(
                 f"Encrypted journal '{self.name}' created at {filename}",
@@ -98,23 +98,21 @@ class EncryptedJournal(Journal):
         with open(filename, "rb") as f:
             journal_encrypted = f.read()
 
-        def decrypt_journal(password):
-            key = make_key(password)
+        def decrypt_journal(key):
             try:
                 plain = Fernet(key).decrypt(journal_encrypted).decode("utf-8")
-                self.password = password
+                self.key = key
                 return plain
             except (InvalidToken, IndexError):
                 return None
 
-        if self.password:
-            return decrypt_journal(self.password)
+        if self.key:
+            return decrypt_journal(self.key)
 
         return decrypt_content(keychain=self.name, decrypt_func=decrypt_journal)
 
     def _store(self, filename, text):
-        key = make_key(self.password)
-        journal = Fernet(key).encrypt(text.encode("utf-8"))
+        journal = Fernet(self.key).encrypt(text.encode("utf-8"))
         with open(filename, "wb") as f:
             f.write(journal)
 
